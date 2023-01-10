@@ -146,7 +146,6 @@ func (r *apisixIngressController) Finalise(ctx context.Context) error {
 	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.CanaryService}, canaryApisixUpstream)
 	if err != nil {
 		klog.Errorf("rollout(%s/%s) get canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
-		return err
 	}
 
 	// First, set canary backend 0 weight
@@ -166,16 +165,16 @@ func (r *apisixIngressController) Finalise(ctx context.Context) error {
 		}
 
 		if !canaryBackendExists {
-			return fmt.Errorf("rollout(%s/%s) get apisix route canary backend(%s) failed", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
-		}
-
-		// Remove canary backend from backends array by index
-		if len(backends) == canaryBackendIndex+1 {
-			backends = backends[:canaryBackendIndex]
+			klog.Warningf("rollout(%s/%s) get apisix route(%s) canary backend(%s) failed", r.conf.RolloutNs, r.conf.RolloutName, thr.Name, r.conf.CanaryService)
 		} else {
-			backends = append(backends[:canaryBackendIndex], backends[canaryBackendIndex+1:]...)
+			// Remove canary backend from backends array by index
+			if len(backends) == canaryBackendIndex+1 {
+				backends = backends[:canaryBackendIndex]
+			} else {
+				backends = append(backends[:canaryBackendIndex], backends[canaryBackendIndex+1:]...)
+			}
+			apisixRoute.Spec.HTTP[index].Backends = backends
 		}
-		apisixRoute.Spec.HTTP[index].Backends = backends
 	}
 
 	// Second, update apisix route object and remove canary backend
@@ -186,11 +185,13 @@ func (r *apisixIngressController) Finalise(ctx context.Context) error {
 	klog.Infof("rollout(%s/%s) remove apisix route canary backend(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
 
 	// Finally, remove canary apisix upstream object
-	if err = r.Delete(ctx, canaryApisixUpstream); err != nil {
-		klog.Errorf("rollout(%s/%s) remove canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
-		return err
+	if !reflect.DeepEqual(canaryApisixUpstream, &a6v2.ApisixUpstream{}) {
+		if err = r.Delete(ctx, canaryApisixUpstream); err != nil {
+			klog.Errorf("rollout(%s/%s) remove canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
+			return err
+		}
+		klog.Infof("rollout(%s/%s) remove canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
 	}
-	klog.Infof("rollout(%s/%s) remove canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
 
 	return nil
 }
@@ -263,14 +264,13 @@ func (r *apisixIngressController) buildCanaryApisixRoute(ar *a6v2.ApisixRoute) (
 func (r *apisixIngressController) buildCanaryApisixUpstream(au *a6v2.ApisixUpstream) (*a6v2.ApisixUpstream, error) {
 	desiredApisixUpstream := &a6v2.ApisixUpstream{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            au.Name,
+			Name:            r.conf.CanaryService,
 			Namespace:       au.Namespace,
 			Annotations:     au.Annotations,
 			OwnerReferences: []metav1.OwnerReference{r.conf.OwnerRef},
 		},
 		Spec: au.Spec.DeepCopy(),
 	}
-	desiredApisixUpstream.ObjectMeta.Name = r.conf.CanaryService
 
 	return desiredApisixUpstream, nil
 }
