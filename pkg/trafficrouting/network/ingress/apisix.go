@@ -237,8 +237,9 @@ func (r *apisixIngressController) buildCanaryApisixRoute(ar *a6v2.ApisixRoute) (
 
 	for index, thr := range targetHTTPRoutes {
 		if len(thr.Backends) != 1 {
-			return nil, fmt.Errorf("apisix route %s.%s's http route %s only one http backend is supported",
+			klog.Warningf("apisix route %s.%s's http route %s only one http backend is supported",
 				r.conf.RolloutNs, r.conf.TrafficConf.Name, thr.Name)
+			continue
 		}
 
 		primaryBackend := thr.Backends[0]
