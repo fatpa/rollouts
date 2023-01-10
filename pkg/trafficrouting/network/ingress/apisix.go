@@ -73,7 +73,8 @@ func (r *apisixIngressController) Initialize(ctx context.Context) error {
 		return err
 	}
 
-	if err = r.Create(ctx, canaryApisixUpstream); err != nil {
+	err = r.Create(ctx, canaryApisixUpstream)
+	if err != nil && !errors.IsAlreadyExists(err) {
 		klog.Errorf("rollout(%s/%s) create canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
 		return err
 	}
@@ -237,8 +238,9 @@ func (r *apisixIngressController) buildCanaryApisixRoute(ar *a6v2.ApisixRoute) (
 
 	for index, thr := range targetHTTPRoutes {
 		if len(thr.Backends) != 1 {
-			return nil, fmt.Errorf("apisix route %s.%s's http route %s only one http backend is supported",
+			klog.Warningf("apisix route %s.%s's http route %s only one http backend is supported",
 				r.conf.RolloutNs, r.conf.TrafficConf.Name, thr.Name)
+			continue
 		}
 
 		primaryBackend := thr.Backends[0]
