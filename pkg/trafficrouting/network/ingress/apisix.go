@@ -54,28 +54,9 @@ func (r *apisixIngressController) Initialize(ctx context.Context) error {
 		return err
 	}
 
-	apisixUpstream := &a6v2.ApisixUpstream{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.StableService}, apisixUpstream)
-	if err != nil {
-		klog.Errorf("rollout(%s/%s) get apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.StableService, err.Error())
-		return err
-	}
-
 	apisixRoute, err = r.buildCanaryApisixRoute(apisixRoute)
 	if err != nil {
 		klog.Errorf("rollout(%s/%s) build canary apisix route failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return err
-	}
-
-	canaryApisixUpstream, err := r.buildCanaryApisixUpstream(apisixUpstream)
-	if err != nil {
-		klog.Errorf("rollout(%s/%s) build canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return err
-	}
-
-	err = r.Create(ctx, canaryApisixUpstream)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		klog.Errorf("rollout(%s/%s) create canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
 		return err
 	}
 
@@ -93,8 +74,27 @@ func (r *apisixIngressController) EnsureRoutes(ctx context.Context, weight *int3
 		return true, fmt.Errorf("rollout(%s/%s) update failed: no valid weights", r.conf.RolloutNs, r.conf.RolloutName)
 	}
 
+	apisixUpstream := &a6v2.ApisixUpstream{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.StableService}, apisixUpstream)
+	if err != nil {
+		klog.Errorf("rollout(%s/%s) get apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.StableService, err.Error())
+		return false, err
+	}
+
+	canaryApisixUpstream, err := r.buildCanaryApisixUpstream(apisixUpstream)
+	if err != nil {
+		klog.Errorf("rollout(%s/%s) build canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
+		return false, err
+	}
+
+	err = r.Create(ctx, canaryApisixUpstream)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		klog.Errorf("rollout(%s/%s) create canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
+		return false, err
+	}
+
 	apisixRoute := &a6v2.ApisixRoute{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.TrafficConf.Name}, apisixRoute)
+	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.TrafficConf.Name}, apisixRoute)
 	if err != nil {
 		klog.Errorf("rollout(%s/%s) get apisix route(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.TrafficConf.Name, err.Error())
 		return false, err
