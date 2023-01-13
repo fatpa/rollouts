@@ -54,50 +54,56 @@ func (r *apisixIngressController) Initialize(ctx context.Context) error {
 		return err
 	}
 
-	apisixRoute, err = r.buildCanaryApisixRoute(apisixRoute)
-	if err != nil {
-		klog.Errorf("rollout(%s/%s) build canary apisix route failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return err
-	}
-
-	if err = r.Update(ctx, apisixRoute); err != nil {
-		klog.Errorf("rollout(%s/%s) update apisix route failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return err
-	}
-	klog.Infof("rollout(%s/%s) update apisix route(%s) success", r.conf.RolloutNs, r.conf.RolloutName, util.DumpJSON(apisixRoute))
-
-	return nil
-}
-
-func (r *apisixIngressController) EnsureRoutes(ctx context.Context, weight *int32, matches []v1alpha1.HttpRouteMatch) (bool, error) {
-	if *weight < 0 || *weight > 100 {
-		return true, fmt.Errorf("rollout(%s/%s) update failed: no valid weights", r.conf.RolloutNs, r.conf.RolloutName)
-	}
-
 	apisixUpstream := &a6v2.ApisixUpstream{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.StableService}, apisixUpstream)
+	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.StableService}, apisixUpstream)
 	if err != nil {
 		klog.Errorf("rollout(%s/%s) get apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.StableService, err.Error())
-		return false, err
+		return err
 	}
 
 	canaryApisixUpstream, err := r.buildCanaryApisixUpstream(apisixUpstream)
 	if err != nil {
 		klog.Errorf("rollout(%s/%s) build canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return false, err
+		return err
 	}
 
 	err = r.Create(ctx, canaryApisixUpstream)
 	if err != nil && !errors.IsAlreadyExists(err) {
 		klog.Errorf("rollout(%s/%s) create canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return false, err
+		return err
 	}
 
+	klog.Infof("rollout(%s/%s) create canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, util.DumpJSON(canaryApisixUpstream))
+
+	return nil
+}
+
+func (r *apisixIngressController) EnsureRoutes(ctx context.Context, weight *int32, matches []v1alpha1.HttpRouteMatch) (bool, error) {
 	apisixRoute := &a6v2.ApisixRoute{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.TrafficConf.Name}, apisixRoute)
+	err := r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.TrafficConf.Name}, apisixRoute)
 	if err != nil {
 		klog.Errorf("rollout(%s/%s) get apisix route(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.TrafficConf.Name, err.Error())
 		return false, err
+	}
+
+	if *weight < 0 || *weight > 100 {
+		return true, fmt.Errorf("rollout(%s/%s) update failed: no valid weights", r.conf.RolloutNs, r.conf.RolloutName)
+	}
+
+	canaryApisixRoute, err := r.buildCanaryApisixRoute(apisixRoute)
+	if err != nil {
+		klog.Errorf("rollout(%s/%s) build canary apisix route failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
+		return false, err
+	}
+	if !reflect.DeepEqual(apisixRoute.Spec, canaryApisixRoute.Spec) {
+		if err = r.Update(ctx, canaryApisixRoute); err != nil {
+			klog.Errorf("rollout(%s/%s) update apisix route failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
+			return false, err
+		}
+
+		apisixRoute = canaryApisixRoute
+
+		klog.Infof("rollout(%s/%s) update apisix route(%s) success", r.conf.RolloutNs, r.conf.RolloutName, util.DumpJSON(canaryApisixRoute))
 	}
 
 	apisixRouteClone := apisixRoute.DeepCopy()
@@ -139,15 +145,6 @@ func (r *apisixIngressController) Finalise(ctx context.Context) error {
 		klog.Errorf("rollout(%s/%s) get apisix route(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.TrafficConf.Name, err.Error())
 		return err
 	}
-	if errors.IsNotFound(err) || !apisixRoute.DeletionTimestamp.IsZero() {
-		return nil
-	}
-
-	canaryApisixUpstream := &a6v2.ApisixUpstream{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.CanaryService}, canaryApisixUpstream)
-	if err != nil {
-		klog.Errorf("rollout(%s/%s) get canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
-	}
 
 	// First, set canary backend 0 weight
 	targetHTTPRoutes, _ := r.getTargetHTTPRoutes(apisixRoute, r.conf.StableService)
@@ -186,13 +183,21 @@ func (r *apisixIngressController) Finalise(ctx context.Context) error {
 	klog.Infof("rollout(%s/%s) remove apisix route canary backend(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
 
 	// Finally, remove canary apisix upstream object
-	if !reflect.DeepEqual(canaryApisixUpstream, &a6v2.ApisixUpstream{}) {
-		if err = r.Delete(ctx, canaryApisixUpstream); err != nil {
-			klog.Errorf("rollout(%s/%s) remove canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
-			return err
-		}
-		klog.Infof("rollout(%s/%s) remove canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
+	canaryApisixUpstream := &a6v2.ApisixUpstream{}
+	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.CanaryService}, canaryApisixUpstream)
+	if err != nil && !errors.IsNotFound(err) {
+		klog.Errorf("rollout(%s/%s) get canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
+		return err
 	}
+	if err != nil && errors.IsNotFound(err) {
+		return nil
+	}
+
+	if err = r.Delete(ctx, canaryApisixUpstream); err != nil {
+		klog.Errorf("rollout(%s/%s) remove canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
+		return err
+	}
+	klog.Infof("rollout(%s/%s) remove canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
 
 	return nil
 }
