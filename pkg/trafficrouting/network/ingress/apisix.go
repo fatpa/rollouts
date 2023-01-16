@@ -25,8 +25,6 @@ import (
 	a6v2 "github.com/openkruise/rollouts/pkg/apis/apisix/v2"
 	"github.com/openkruise/rollouts/pkg/trafficrouting/network"
 	"github.com/openkruise/rollouts/pkg/util"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	utilpointer "k8s.io/utils/pointer"
@@ -53,27 +51,6 @@ func (r *apisixIngressController) Initialize(ctx context.Context) error {
 		klog.Errorf("rollout(%s/%s) get apisix route(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.TrafficConf.Name, err.Error())
 		return err
 	}
-
-	apisixUpstream := &a6v2.ApisixUpstream{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.StableService}, apisixUpstream)
-	if err != nil {
-		klog.Errorf("rollout(%s/%s) get apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.StableService, err.Error())
-		return err
-	}
-
-	canaryApisixUpstream, err := r.buildCanaryApisixUpstream(apisixUpstream)
-	if err != nil {
-		klog.Errorf("rollout(%s/%s) build canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return err
-	}
-
-	err = r.Create(ctx, canaryApisixUpstream)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		klog.Errorf("rollout(%s/%s) create canary apisix upstream failed: %s", r.conf.RolloutNs, r.conf.RolloutName, err.Error())
-		return err
-	}
-
-	klog.Infof("rollout(%s/%s) create canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, util.DumpJSON(canaryApisixUpstream))
 
 	return nil
 }
@@ -182,23 +159,6 @@ func (r *apisixIngressController) Finalise(ctx context.Context) error {
 	}
 	klog.Infof("rollout(%s/%s) remove apisix route canary backend(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
 
-	// Finally, remove canary apisix upstream object
-	canaryApisixUpstream := &a6v2.ApisixUpstream{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: r.conf.RolloutNs, Name: r.conf.CanaryService}, canaryApisixUpstream)
-	if err != nil && !errors.IsNotFound(err) {
-		klog.Errorf("rollout(%s/%s) get canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
-		return err
-	}
-	if err != nil && errors.IsNotFound(err) {
-		return nil
-	}
-
-	if err = r.Delete(ctx, canaryApisixUpstream); err != nil {
-		klog.Errorf("rollout(%s/%s) remove canary apisix upstream(%s) failed: %s", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService, err.Error())
-		return err
-	}
-	klog.Infof("rollout(%s/%s) remove canary apisix upstream(%s) success", r.conf.RolloutNs, r.conf.RolloutName, r.conf.CanaryService)
-
 	return nil
 }
 
@@ -266,18 +226,4 @@ func (r *apisixIngressController) buildCanaryApisixRoute(ar *a6v2.ApisixRoute) (
 	}
 
 	return desiredApisixRoute, nil
-}
-
-func (r *apisixIngressController) buildCanaryApisixUpstream(au *a6v2.ApisixUpstream) (*a6v2.ApisixUpstream, error) {
-	desiredApisixUpstream := &a6v2.ApisixUpstream{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            r.conf.CanaryService,
-			Namespace:       au.Namespace,
-			Annotations:     au.Annotations,
-			OwnerReferences: []metav1.OwnerReference{r.conf.OwnerRef},
-		},
-		Spec: au.Spec.DeepCopy(),
-	}
-
-	return desiredApisixUpstream, nil
 }
