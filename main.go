@@ -25,12 +25,14 @@ import (
 	rolloutsv1alpha1 "github.com/openkruise/rollouts/api/v1alpha1"
 	a6v2 "github.com/openkruise/rollouts/pkg/apis/apisix/v2"
 	br "github.com/openkruise/rollouts/pkg/controller/batchrelease"
+	"github.com/openkruise/rollouts/pkg/controller/deployment"
 	"github.com/openkruise/rollouts/pkg/controller/rollout"
 	"github.com/openkruise/rollouts/pkg/controller/rollouthistory"
 	utilclient "github.com/openkruise/rollouts/pkg/util/client"
 	utilfeature "github.com/openkruise/rollouts/pkg/util/feature"
 	"github.com/openkruise/rollouts/pkg/webhook"
 	"github.com/spf13/pflag"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -57,6 +59,7 @@ func init() {
 	utilruntime.Must(kruisev1beta1.AddToScheme(scheme))
 	utilruntime.Must(rolloutsv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1alpha2.AddToScheme(scheme))
+	utilruntime.Must(admissionregistrationv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 	utilruntime.Must(a6v2.AddToScheme(scheme))
 }
@@ -116,6 +119,10 @@ func main() {
 
 	if err = rollouthistory.Add(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "rollouthistory")
+		os.Exit(1)
+	}
+	if err = deployment.Add(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "advanceddeployment")
 		os.Exit(1)
 	}
 

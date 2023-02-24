@@ -14,4 +14,8 @@ spec:
         - "--health-probe-bind-address=:8081"
         - "--metrics-bind-address=127.0.0.1:8080"
         - "--leader-elect"
-        - "--v=3"
+        - "--feature-gates=AdvancedDeployment=true"
+        - "--v=5"
+        env:
+        - name: KUBE_CACHE_MUTATION_DETECTOR
+          value: "true"
